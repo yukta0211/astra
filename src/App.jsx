@@ -19,6 +19,8 @@ import { initialExamPlan } from './utils/plannerEngine';
 import { audioEngine } from './utils/audioEngine';
 
 import { getSystemTimeContext, getDynamicExamPlan } from './utils/dateTime';
+import { calculatePlannedSessionsProgress } from './utils/studyProgress';
+import { Toaster, toast } from 'sonner';
 
 const API_BASE = "http://localhost:8000/api";
 
@@ -28,8 +30,16 @@ export default function App() {
   const [schedule, setSchedule] = useState(initialSchedule);
   const [tasks, setTasks] = useState(initialTasks);
   const [recentActivity, setRecentActivity] = useState(initialRecentActivity);
-  const [studyProgress, setStudyProgress] = useState(55);
   const [examPlan, setExamPlan] = useState(initialExamPlan);
+  const [plannerMeta, setPlannerMeta] = useState({
+    subject: "DBMS",
+    plan_status: "NEEDS_CONFIRMATION",
+    exam_status: "PAST_OUTDATED",
+    status_label: "Outdated (Past Exam Date)",
+    requires_confirmation: true,
+    warning: "Stored DBMS exam date (March 21, 2025) has already passed. Please confirm or update your upcoming exam date.",
+    prevent_calendar_alerts: true
+  });
   const [dbmsDocument, setDbmsDocument] = useState(dbmsNotesDocument);
   const [aiStatus, setAiStatus] = useState("Online");
   const [systemTime, setSystemTime] = useState(getSystemTimeContext());
@@ -59,12 +69,26 @@ export default function App() {
         if (data.tasks && data.tasks.length > 0) setTasks(data.tasks);
         if (data.recent_activities && data.recent_activities.length > 0) setRecentActivity(data.recent_activities);
         if (data.time_context) setSystemTime(data.time_context);
+        if (data.exam_audit) {
+          setPlannerMeta(prev => ({
+            ...prev,
+            exam_status: data.exam_audit.status,
+            status_label: data.exam_audit.status_label,
+            requires_confirmation: data.exam_audit.requires_confirmation,
+            warning: data.exam_audit.warning_message
+          }));
+        }
       }
 
       const planRes = await fetch(`${API_BASE}/planner`);
       if (planRes.ok) {
         const planData = await planRes.json();
-        if (planData && planData.length > 0) setExamPlan(planData);
+        if (planData && planData.plan && Array.isArray(planData.plan)) {
+          setExamPlan(planData.plan);
+          setPlannerMeta(planData);
+        } else if (Array.isArray(planData)) {
+          setExamPlan(planData);
+        }
       }
     } catch (e) {
       console.warn("Backend API offline, using local state fallback.", e);
@@ -142,9 +166,11 @@ export default function App() {
       });
       if (res.ok) {
         fetchState();
+        toast.success('Persistent memory stored successfully');
       }
     } catch (e) {
       console.error("Error saving memory:", e);
+      toast.error('Failed to save memory to backend');
     }
   };
 
@@ -153,7 +179,6 @@ export default function App() {
     setSchedule(initialSchedule);
     setTasks(initialTasks);
     setRecentActivity(initialRecentActivity);
-    setStudyProgress(55);
     setExamPlan(initialExamPlan);
     setActiveTab('mission');
     setChatHistory([
@@ -165,16 +190,28 @@ export default function App() {
         status: 'Online'
       }
     ]);
+    toast.info('Workspace reset to initial DBMS demo state');
   };
+
+  // Compute study progress strictly from verified examPlan records
+  const studyProgressData = calculatePlannedSessionsProgress(examPlan, plannerMeta?.subject || 'DBMS');
+  const studyProgress = studyProgressData.percentage;
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh', backgroundColor: 'var(--bg-main)' }}>
+      {/* WCAG 2.2 SC 2.4.1: Skip to main content link */}
+      <a href="#main-content" className="skip-link">
+        Skip to main content
+      </a>
+
+      {/* Emil Kowalski's Sonner Toaster */}
+      <Toaster theme="dark" richColors position="top-right" closeButton duration={3200} />
       
       {/* Sidebar Navigation */}
       <Sidebar 
         activeTab={activeTab} 
         setActiveTab={setActiveTab} 
-        memoryCount={memories.length} 
+        memoryCount={memories.filter(m => (m.lifecycle_state || m.status) !== 'ARCHIVED').length} 
       />
 
       {/* Main Content Area */}
@@ -183,22 +220,27 @@ export default function App() {
         {/* Top Header */}
         <Header activeTab={activeTab} systemTime={systemTime} />
 
-        {/* View Switcher */}
-        <main style={{ flex: 1, overflowY: 'auto' }}>
+        {/* View Switcher Landmark */}
+        <main id="main-content" tabIndex="-1" style={{ flex: 1, overflowY: 'auto' }}>
           {activeTab === 'mission' && (
             <MissionControl 
               schedule={schedule}
+              setSchedule={setSchedule}
               tasks={tasks}
               setTasks={setTasks}
               recentActivity={recentActivity}
               studyProgress={studyProgress}
-              setStudyProgress={setStudyProgress}
+              examPlan={examPlan}
+              setExamPlan={setExamPlan}
+              plannerMeta={plannerMeta}
               setActiveTab={setActiveTab}
               dbmsDocument={dbmsDocument}
               chatHistory={chatHistory}
+              setChatHistory={setChatHistory}
               handleSendChatMessage={handleSendChatMessage}
               aiStatus={aiStatus}
               systemTime={systemTime}
+              fetchState={fetchState}
             />
           )}
 
@@ -221,6 +263,8 @@ export default function App() {
             <PlannerView 
               examPlan={examPlan} 
               setExamPlan={setExamPlan}
+              plannerMeta={plannerMeta}
+              setPlannerMeta={setPlannerMeta}
               fetchState={fetchState}
             />
           )}

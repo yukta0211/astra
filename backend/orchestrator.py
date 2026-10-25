@@ -45,14 +45,37 @@ def process_user_request(query: str, history: List[Dict[str, str]] = None):
     # Intent: QUERY_KNOWLEDGE (RAG Search)
     elif intent == "QUERY_KNOWLEDGE" or llm_res.get("requires_knowledge"):
         status_state = "Searching documents..."
-        chunks = search_rag_chunks(query)
-        rag_res = generate_rag_answer(query, chunks)
-        
-        # Merge LLM answer with RAG grounded answer if available
-        if chunks:
-            reply = rag_res["answer"]
-            citations = rag_res["citations"]
-            action_executed = {"type": "QUERY_KNOWLEDGE", "detail": f"Retrieved {len(chunks)} document passages with top citation {citations[0] if citations else 'N/A'}"}
+        try:
+            from rag.retriever import retrieve_relevant_chunks
+            from rag.answer_generator import generate_grounded_answer
+            qdrant_chunks = retrieve_relevant_chunks(query, top_k=3)
+        except Exception:
+            qdrant_chunks = []
+
+        if qdrant_chunks:
+            try:
+                rag_res = generate_grounded_answer(query, qdrant_chunks)
+                reply = rag_res.get("answer", "")
+                citations = [
+                    f"{c.get('filename', 'Notes')} — Page {c.get('page_start', 1)}"
+                    for c in rag_res.get("citations", [])
+                ]
+            except Exception:
+                top_chk = qdrant_chunks[0]
+                reply = f"According to your notes ({top_chk.get('filename', 'Notes')}, Page {top_chk.get('page_start', 1)}):\n{top_chk.get('text', '')}"
+                citations = [f"{top_chk.get('filename', 'Notes')} — Page {top_chk.get('page_start', 1)}"]
+
+            action_executed = {
+                "type": "QUERY_KNOWLEDGE",
+                "detail": f"Retrieved {len(qdrant_chunks)} document passages with top citation {citations[0] if citations else 'N/A'}"
+            }
+        else:
+            chunks = search_rag_chunks(query)
+            rag_res = generate_rag_answer(query, chunks)
+            if chunks:
+                reply = rag_res["answer"]
+                citations = rag_res["citations"]
+                action_executed = {"type": "QUERY_KNOWLEDGE", "detail": f"Retrieved {len(chunks)} document passages with top citation {citations[0] if citations else 'N/A'}"}
 
     # Intent: ADAPT_PLAN
     elif intent == "ADAPT_PLAN":
@@ -63,16 +86,52 @@ def process_user_request(query: str, history: List[Dict[str, str]] = None):
     # Intent: CREATE_PLAN / QUERY_PLAN
     elif intent == "CREATE_PLAN" or llm_res.get("requires_planning"):
         status_state = "Planning..."
-        action_executed = {"type": "CREATE_PLAN", "detail": "Generated 5-day schedule honoring college block (10-16) and focus slots (19-21)"}
+        from date_service import audit_exam_memories
+        subject = entities.get("subject") or "DBMS"
+        audit = audit_exam_memories(memories, subject=subject)
+        
+        if audit["requires_confirmation"]:
+            action_executed = {
+                "type": "CREATE_PLAN",
+                "detail": f"Awaiting exam date confirmation for {subject}: {audit['status_label']}",
+                "requires_confirmation": True
+            }
+            if audit["status"] == "PAST_OUTDATED":
+                warning_suffix = f"\n\n⚠️ Note: Your stored {subject} exam date ({audit.get('stored_date_raw')}) has already passed. Please confirm or update your upcoming exam date to generate an active countdown schedule."
+                if audit.get("stored_date_raw") not in reply or "passed" not in reply.lower():
+                    reply = reply.strip() + warning_suffix
+        else:
+            action_executed = {
+                "type": "CREATE_PLAN",
+                "detail": f"Generated revision schedule leading to {audit.get('stored_date_raw')}"
+            }
+
+    # Intent: QUERY_MEMORY
+    elif intent == "QUERY_MEMORY":
+        status_state = "Recalling..."
+        from date_service import audit_exam_memories
+        subject = entities.get("subject") or "DBMS"
+        audit = audit_exam_memories(memories, subject=subject)
+        if ("exam" in query.lower() or "when" in query.lower()) and audit["status"] == "PAST_OUTDATED":
+            if "passed" not in reply.lower() and "outdated" not in reply.lower():
+                reply += f"\n\n⚠️ Stored date notice: {audit.get('warning_message')}"
 
     # Intent: CREATE_CALENDAR_EVENT
     elif intent == "CREATE_CALENDAR_EVENT" or llm_res.get("requires_action"):
         status_state = "Executing action..."
-        event_title = entities.get("event_title") or entities.get("subject") or "DBMS revision"
-        time_str = entities.get("time_str") or "7:00 PM"
-        
-        act = add_calendar_event_action(event_title, time_str=time_str, duration="19:00 – 21:00", location="Focus session")
-        action_executed = {"type": "CREATE_CALENDAR_EVENT", "detail": act["message"]}
+        from date_service import audit_exam_memories
+        subject = entities.get("subject") or "DBMS"
+        audit = audit_exam_memories(memories, subject=subject)
+
+        if "exam" in query.lower() and audit["requires_confirmation"]:
+            status_state = "Needs Confirmation"
+            reply = f"I cannot arm active countdown alerts for {subject} because the stored exam date ({audit.get('stored_date_raw')}) is outdated. Please confirm your upcoming exam date first."
+            action_executed = {"type": "CALENDAR_ALERT_BLOCKED", "detail": "Prevented calendar alert for unconfirmed historical exam date."}
+        else:
+            event_title = entities.get("event_title") or entities.get("subject") or "DBMS revision"
+            time_str = entities.get("time_str") or "7:00 PM"
+            act = add_calendar_event_action(event_title, time_str=time_str, duration="19:00 – 21:00", location="Focus session")
+            action_executed = {"type": "CREATE_CALENDAR_EVENT", "detail": act["message"]}
 
     # Intent: CREATE_TASK
     elif intent == "CREATE_TASK":
@@ -112,7 +171,14 @@ def get_latest_db_state():
     cursor = conn.cursor()
 
     cursor.execute("SELECT * FROM personal_memories ORDER BY date DESC")
-    memories = [dict(r) for r in cursor.fetchall()]
+    raw_memories = [dict(r) for r in cursor.fetchall()]
+
+    from date_service import parse_date_string, audit_exam_memories
+    from time_service import get_now
+    from memory_service import audit_and_format_memory
+    local_today = get_now().date()
+
+    memories = [audit_and_format_memory(m, reference_date=local_today) for m in raw_memories]
 
     cursor.execute("SELECT * FROM calendar_events")
     schedule = [dict(r) for r in cursor.fetchall()]
@@ -125,9 +191,12 @@ def get_latest_db_state():
 
     conn.close()
 
+    exam_audit = audit_exam_memories(memories, subject="DBMS")
+
     return {
         "memories": memories,
         "schedule": schedule,
         "tasks": tasks,
-        "recent_activities": activities
+        "recent_activities": activities,
+        "exam_audit": exam_audit
     }

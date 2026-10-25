@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { HelpCircle, CheckCircle2, XCircle, ArrowRight, Award, RotateCcw, BookOpen } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { sampleQuizQuestions } from '../utils/initialState';
@@ -9,7 +9,9 @@ export default function QuizModeView({ setStudyProgress, setActiveTab }) {
   const [isAnswered, setIsAnswered] = useState(false);
   const [score, setScore] = useState(0);
   const [quizFinished, setQuizFinished] = useState(false);
+  const [feedbackAnnouncement, setFeedbackAnnouncement] = useState('');
 
+  const questionHeadingRef = useRef(null);
   const currentQ = sampleQuizQuestions[currentQuestionIndex];
 
   const handleSelectOption = (index) => {
@@ -17,8 +19,12 @@ export default function QuizModeView({ setStudyProgress, setActiveTab }) {
     setSelectedOption(index);
     setIsAnswered(true);
 
-    if (index === currentQ.correctAnswerIndex) {
+    const isCorrect = index === currentQ.correctAnswerIndex;
+    if (isCorrect) {
       setScore(prev => prev + 1);
+      setFeedbackAnnouncement(`Correct! Option ${String.fromCharCode(65 + index)}. ${currentQ.explanation}`);
+    } else {
+      setFeedbackAnnouncement(`Incorrect. Selected option ${String.fromCharCode(65 + index)}. Correct answer is Option ${String.fromCharCode(65 + currentQ.correctAnswerIndex)}: ${currentQ.options[currentQ.correctAnswerIndex]}. ${currentQ.explanation}`);
     }
   };
 
@@ -27,16 +33,19 @@ export default function QuizModeView({ setStudyProgress, setActiveTab }) {
       setCurrentQuestionIndex(prev => prev + 1);
       setSelectedOption(null);
       setIsAnswered(false);
+      setFeedbackAnnouncement(`Question ${currentQuestionIndex + 2} of ${sampleQuizQuestions.length}`);
+      setTimeout(() => {
+        questionHeadingRef.current?.focus();
+      }, 50);
     } else {
       setQuizFinished(true);
+      setFeedbackAnnouncement(`Quiz completed! You scored ${score} out of ${sampleQuizQuestions.length}.`);
       // Trigger celebration confetti
       confetti({
         particleCount: 100,
         spread: 70,
         origin: { y: 0.6 }
       });
-      // Update overall study progress to 65%
-      setStudyProgress(65);
     }
   };
 
@@ -46,46 +55,67 @@ export default function QuizModeView({ setStudyProgress, setActiveTab }) {
     setIsAnswered(false);
     setScore(0);
     setQuizFinished(false);
+    setFeedbackAnnouncement("Quiz restarted. Question 1.");
+    setTimeout(() => {
+      questionHeadingRef.current?.focus();
+    }, 50);
   };
 
   return (
-    <div style={{ padding: '32px 28px', maxWidth: '860px', margin: '0 auto' }}>
+    <div className="astra-page-container" style={{ maxWidth: '860px' }}>
       
+      {/* Live announcement region for question changes and answer feedback */}
+      <div role="status" aria-live="polite" className="sr-only">
+        {feedbackAnnouncement}
+      </div>
+
       {/* Header */}
-      <div style={{ marginBottom: '28px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11px', fontWeight: 700, letterSpacing: '0.1em', color: 'var(--cyan-primary)', marginBottom: '8px' }}>
-          <HelpCircle size={16} />
-          <span>ASTRA ADAPTIVE QUIZ MODE</span>
+      <div className="astra-page-header" style={{ marginBottom: 'var(--section-gap, 28px)' }}>
+        <div style={{ minWidth: 0, flex: '1 1 auto' }}>
+          <div className="astra-eyebrow">
+            <HelpCircle size={16} aria-hidden="true" />
+            <span>ASTRA ADAPTIVE QUIZ MODE</span>
+          </div>
+          <h1 className="astra-page-title">
+            DBMS Normalization Mastery Check
+          </h1>
+          <p className="astra-page-subtitle">
+            Test your understanding of 1NF, 2NF, 3NF, BCNF, and Functional Dependencies.
+          </p>
         </div>
-        <h1 style={{ fontFamily: 'var(--font-display)', fontSize: '32px', fontWeight: 700, color: '#fff' }}>
-          DBMS Normalization Mastery Check
-        </h1>
-        <p style={{ color: 'var(--text-secondary)', fontSize: '14px', marginTop: '4px' }}>
-          Test your understanding of 1NF, 2NF, 3NF, BCNF, and Functional Dependencies.
-        </p>
       </div>
 
       {!quizFinished ? (
-        <div className="glass-panel" style={{ padding: '32px' }}>
+        <div className="glass-panel" style={{ padding: 'var(--card-padding, 24px)' }}>
           
           {/* Progress Header */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px' }}>
-            <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--cyan-primary)' }}>
+            <span className="astra-label" style={{ fontSize: 'var(--text-meta, 12.5px)', color: 'var(--cyan-primary)' }}>
               QUESTION {currentQuestionIndex + 1} OF {sampleQuizQuestions.length}
             </span>
 
-            <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+            <span className="astra-meta" style={{ fontSize: 'var(--text-meta, 12.5px)' }}>
               Score: {score}
             </span>
           </div>
 
-          {/* Question Title */}
-          <h2 style={{ fontSize: '18px', fontWeight: 700, color: '#fff', marginBottom: '24px', lineHeight: '1.4' }}>
+          {/* Question Title - Focusable for keyboard/screen-reader navigation */}
+          <h2 
+            ref={questionHeadingRef}
+            id="quiz-question-title"
+            tabIndex={-1}
+            className="astra-section-title" 
+            style={{ fontSize: 'var(--text-section-title, 22px)', marginBottom: '24px', lineHeight: 'var(--leading-snug, 1.35)', outline: 'none' }}
+          >
             {currentQ.question}
           </h2>
 
-          {/* Options */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '28px' }}>
+          {/* Accessible Options as Radiogroup */}
+          <div 
+            role="radiogroup" 
+            aria-labelledby="quiz-question-title"
+            style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '28px' }}
+          >
             {currentQ.options.map((opt, idx) => {
               let optStyle = {
                 padding: '14px 18px',
@@ -95,10 +125,13 @@ export default function QuizModeView({ setStudyProgress, setActiveTab }) {
                 color: '#fff',
                 fontSize: '14px',
                 cursor: isAnswered ? 'default' : 'pointer',
-                transition: 'all 0.2s ease',
+                transition: 'transform var(--duration-press) var(--ease-out), background-color var(--duration-hover) var(--ease-out), border-color var(--duration-hover) var(--ease-out)',
                 display: 'flex',
                 alignItems: 'center',
-                justifyContent: 'space-between'
+                justifyContent: 'space-between',
+                width: '100%',
+                textAlign: 'left',
+                fontFamily: 'inherit'
               };
 
               if (isAnswered) {
@@ -114,8 +147,12 @@ export default function QuizModeView({ setStudyProgress, setActiveTab }) {
               }
 
               return (
-                <div 
+                <button 
                   key={idx} 
+                  type="button"
+                  role="radio"
+                  aria-checked={selectedOption === idx}
+                  aria-disabled={isAnswered}
                   style={optStyle}
                   onClick={() => handleSelectOption(idx)}
                 >
@@ -129,7 +166,8 @@ export default function QuizModeView({ setStudyProgress, setActiveTab }) {
                       fontWeight: 700,
                       display: 'flex',
                       alignItems: 'center',
-                      justifyContent: 'center'
+                      justifyContent: 'center',
+                      flexShrink: 0
                     }}>
                       {String.fromCharCode(65 + idx)}
                     </span>
@@ -137,25 +175,29 @@ export default function QuizModeView({ setStudyProgress, setActiveTab }) {
                   </div>
 
                   {isAnswered && idx === currentQ.correctAnswerIndex && (
-                    <CheckCircle2 size={18} color="#10b981" />
+                    <CheckCircle2 size={18} color="#10b981" aria-label="Correct answer" />
                   )}
                   {isAnswered && idx === selectedOption && idx !== currentQ.correctAnswerIndex && (
-                    <XCircle size={18} color="#ef4444" />
+                    <XCircle size={18} color="#ef4444" aria-label="Incorrect answer" />
                   )}
-                </div>
+                </button>
               );
             })}
           </div>
 
           {/* Explanation & Source Citation */}
           {isAnswered && (
-            <div style={{
-              background: 'rgba(0, 242, 254, 0.06)',
-              border: '1px solid rgba(0, 242, 254, 0.25)',
-              borderRadius: '10px',
-              padding: '16px',
-              marginBottom: '24px'
-            }}>
+            <div 
+              role="region"
+              aria-label="Answer explanation and citation"
+              style={{
+                background: 'rgba(0, 242, 254, 0.06)',
+                border: '1px solid rgba(0, 242, 254, 0.25)',
+                borderRadius: '10px',
+                padding: '16px',
+                marginBottom: '24px'
+              }}
+            >
               <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--cyan-primary)', letterSpacing: '0.05em', marginBottom: '4px' }}>
                 EXPLANATION & CITATION
               </div>
@@ -171,20 +213,20 @@ export default function QuizModeView({ setStudyProgress, setActiveTab }) {
           {/* Footer Controls */}
           <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
             <button 
+              type="button"
               onClick={handleNext}
               disabled={!isAnswered}
               className="btn-cyan"
-              style={{ opacity: isAnswered ? 1 : 0.4 }}
             >
               <span>{currentQuestionIndex < sampleQuizQuestions.length - 1 ? 'Next Question' : 'Finish Quiz'}</span>
-              <ArrowRight size={16} />
+              <ArrowRight size={16} aria-hidden="true" />
             </button>
           </div>
 
         </div>
       ) : (
         /* Quiz Summary Card */
-        <div className="glass-panel" style={{ padding: '40px', textAlign: 'center' }}>
+        <div className="glass-panel" style={{ padding: 'var(--card-padding, 24px)', textAlign: 'center' }}>
           <Award size={54} color="var(--cyan-primary)" style={{ marginBottom: '16px' }} />
           <h2 style={{ fontSize: '26px', fontWeight: 700, color: '#fff', marginBottom: '8px' }}>
             Quiz Completed!

@@ -5,9 +5,71 @@ from datetime import datetime
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "astra.db")
 
+_schema_migrated = False
+
+def ensure_schema(conn):
+    global _schema_migrated
+    if _schema_migrated:
+        return
+    try:
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(personal_memories)")
+        columns = [row["name"] for row in cursor.fetchall()]
+        if columns:
+            if "verification_status" not in columns:
+                cursor.execute("ALTER TABLE personal_memories ADD COLUMN verification_status TEXT DEFAULT 'UNVERIFIED'")
+            if "lifecycle_state" not in columns:
+                cursor.execute("ALTER TABLE personal_memories ADD COLUMN lifecycle_state TEXT DEFAULT 'UNVERIFIED'")
+            if "last_verified_at" not in columns:
+                cursor.execute("ALTER TABLE personal_memories ADD COLUMN last_verified_at TEXT DEFAULT NULL")
+            if "last_updated_at" not in columns:
+                cursor.execute("ALTER TABLE personal_memories ADD COLUMN last_updated_at TEXT DEFAULT NULL")
+            if "original_source" not in columns:
+                cursor.execute("ALTER TABLE personal_memories ADD COLUMN original_source TEXT DEFAULT NULL")
+            if "original_date" not in columns:
+                cursor.execute("ALTER TABLE personal_memories ADD COLUMN original_date TEXT DEFAULT NULL")
+            if "original_content" not in columns:
+                cursor.execute("ALTER TABLE personal_memories ADD COLUMN original_content TEXT DEFAULT NULL")
+            if "edit_history" not in columns:
+                cursor.execute("ALTER TABLE personal_memories ADD COLUMN edit_history TEXT DEFAULT '[]'")
+
+            # Backfill initial provenance & timestamps for existing rows
+            cursor.execute("UPDATE personal_memories SET original_source = source WHERE original_source IS NULL")
+            cursor.execute("UPDATE personal_memories SET original_date = date WHERE original_date IS NULL")
+            cursor.execute("UPDATE personal_memories SET original_content = content WHERE original_content IS NULL")
+            cursor.execute("UPDATE personal_memories SET last_updated_at = date WHERE last_updated_at IS NULL")
+            cursor.execute("""
+                UPDATE personal_memories
+                SET verification_status = CASE
+                    WHEN confidence = '100%' OR source IN ('Student Confirmation', 'Memory Store Update') THEN 'VERIFIED'
+                    WHEN category = 'Exams' AND (content LIKE '%2025%' OR title LIKE '%2025%') THEN 'NEEDS_REVIEW'
+                    ELSE 'UNVERIFIED'
+                END
+                WHERE verification_status IS NULL OR verification_status = ''
+            """)
+            cursor.execute("""
+                UPDATE personal_memories
+                SET lifecycle_state = CASE
+                    WHEN verification_status = 'VERIFIED' OR confidence = '100%' OR source IN ('Student Confirmation', 'Memory Store Update') THEN 'VERIFIED'
+                    WHEN category = 'Exams' AND (content LIKE '%2025%' OR title LIKE '%2025%') THEN 'OUTDATED'
+                    ELSE 'UNVERIFIED'
+                END
+                WHERE lifecycle_state IS NULL OR lifecycle_state = ''
+            """)
+            cursor.execute("""
+                UPDATE personal_memories
+                SET last_verified_at = date
+                WHERE (lifecycle_state = 'VERIFIED' OR verification_status = 'VERIFIED') AND last_verified_at IS NULL
+            """)
+            conn.commit()
+        _schema_migrated = True
+    except Exception:
+        pass
+
 def get_db():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
+    ensure_schema(conn)
     return conn
 
 def init_db():
@@ -84,6 +146,7 @@ def init_db():
     """)
 
     conn.commit()
+    ensure_schema(conn)
 
     # Seed Initial Data if empty
     cursor.execute("SELECT COUNT(*) as cnt FROM personal_memories")
@@ -95,13 +158,17 @@ def init_db():
 def seed_data(conn):
     cursor = conn.cursor()
     
-    # Seed Memories
+    # Seed Memories with explicit verification statuses, lifecycle states, and preserved legacy provenance
     memories = [
-        ('mem-1', 'Exams', 'DBMS Final Exam Date', 'DBMS exam is scheduled for Friday, March 21, 2025.', '98%', 'Voice Input / Calendar', '2025-03-16'),
-        ('mem-2', 'Weak Subjects', 'Normalization Weakness', 'Struggles with 3NF vs BCNF decomposition and identifying Lossless Join properties.', '95%', 'Quiz Mode Performance', '2025-03-17'),
-        ('mem-3', 'Preferences', 'Study Time Preference', 'Prefers deep focus revision slots in the evening between 19:00 and 21:00.', '92%', 'Schedule Engine Analysis', '2025-03-15')
+        ('mem-1', 'Exams', 'DBMS Final Exam Date', 'DBMS exam is scheduled for Friday, March 21, 2025.', 'Needs Review', 'Voice Input / Calendar', '2025-03-16', 'NEEDS_REVIEW', 'OUTDATED', None, '2025-03-16', 'Voice Input / Calendar', '2025-03-16', 'DBMS exam is scheduled for Friday, March 21, 2025.', '[]'),
+        ('mem-2', 'Weak Subjects', 'Normalization Weakness', 'Struggles with 3NF vs BCNF decomposition and identifying Lossless Join properties.', 'Unverified', 'Quiz Mode Performance', '2025-03-17', 'UNVERIFIED', 'UNVERIFIED', None, '2025-03-17', 'Quiz Mode Performance', '2025-03-17', 'Struggles with 3NF vs BCNF decomposition and identifying Lossless Join properties.', '[]'),
+        ('mem-3', 'Preferences', 'Study Time Preference', 'Prefers deep focus revision slots in the evening between 19:00 and 21:00.', 'Unverified', 'Schedule Engine Analysis', '2025-03-15', 'UNVERIFIED', 'UNVERIFIED', None, '2025-03-15', 'Schedule Engine Analysis', '2025-03-15', 'Prefers deep focus revision slots in the evening between 19:00 and 21:00.', '[]')
     ]
-    cursor.executemany("INSERT OR IGNORE INTO personal_memories VALUES (?, ?, ?, ?, ?, ?, ?)", memories)
+    cursor.executemany("""
+        INSERT OR IGNORE INTO personal_memories 
+        (id, category, title, content, confidence, source, date, verification_status, lifecycle_state, last_verified_at, last_updated_at, original_source, original_date, original_content, edit_history) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, memories)
 
     # Seed Schedule
     schedule = [

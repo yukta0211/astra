@@ -1,7 +1,7 @@
 import os
 import uuid
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from dotenv import load_dotenv
 from qdrant_client import QdrantClient
 from qdrant_client import models
@@ -104,8 +104,8 @@ class QdrantVectorStore:
                 "chunk_id": chunk_id,
                 "chunk_index": chunk.get("chunk_index", 0),
                 "text": chunk.get("text", ""),
-                "page_start": chunk.get("page_start", 1),
-                "page_end": chunk.get("page_end", 1),
+                "page_start": chunk.get("page_start"),
+                "page_end": chunk.get("page_end"),
                 "word_count": chunk.get("word_count", 0),
                 "character_count": chunk.get("character_count", 0)
             }
@@ -128,22 +128,17 @@ class QdrantVectorStore:
         )
         return len(points)
 
-    def search_similar_chunks(
+    def search_similar_chunks_with_diagnostics(
         self,
         query_vector: List[float],
         top_k: int = 5,
-        score_threshold: Optional[float] = None
-    ) -> List[Dict[str, Any]]:
+        score_threshold: Optional[float] = None,
+        filter_doc_id: Optional[str] = None
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         """
-        Queries Qdrant collection for top_k nearest vector points matching query_vector using Cosine similarity.
-        
-        Args:
-            query_vector: Numeric vector array generated for input query.
-            top_k: Number of nearest neighbor results to return (default: 5).
-            score_threshold: Optional minimum cosine similarity score threshold.
-            
-        Returns:
-            List of structured chunk dictionaries containing payload metadata and cosine similarity score.
+        Queries Qdrant collection for nearest vector points matching query_vector using Cosine similarity.
+        Computes safe, structured development diagnostics including candidate counts, score spread,
+        threshold cutoff effects, and filtering reasons without logging secrets or raw documents.
         """
         if not query_vector or not isinstance(query_vector, list):
             raise ValueError("query_vector must be a non-empty list of floats.")
@@ -155,33 +150,126 @@ class QdrantVectorStore:
         existing_names = [c.name for c in collections_response.collections]
         if self.collection_name not in existing_names:
             logger.warning(f"Qdrant collection '{self.collection_name}' does not exist.")
-            return []
+            diag = {
+                "vector_store": "qdrant",
+                "collection": self.collection_name,
+                "vector_dimension": DEFAULT_VECTOR_SIZE,
+                "total_points_in_collection": 0,
+                "candidates_found": 0,
+                "retrieved_count": 0,
+                "filtered_out_count": 0,
+                "score_threshold_applied": score_threshold,
+                "top_score": None,
+                "lowest_score": None,
+                "filtering_reason": "collection_not_found",
+                "status": "collection_not_found"
+            }
+            return [], diag
 
+        total_points = self.count_points()
+
+        # Candidate pool limit: retrieve enough candidates to compute real distribution metrics
+        candidate_limit = max(top_k * 3, 10)
         try:
             query_response = client.query_points(
                 collection_name=self.collection_name,
                 query=query_vector,
-                limit=top_k,
-                score_threshold=score_threshold
+                limit=candidate_limit,
+                score_threshold=None
             )
             scored_points = getattr(query_response, "points", query_response)
         except Exception as e:
             logger.error(f"Error querying Qdrant collection '{self.collection_name}': {e}", exc_info=True)
-            return []
+            diag = {
+                "vector_store": "qdrant",
+                "collection": self.collection_name,
+                "vector_dimension": DEFAULT_VECTOR_SIZE,
+                "total_points_in_collection": total_points,
+                "candidates_found": 0,
+                "retrieved_count": 0,
+                "filtered_out_count": 0,
+                "score_threshold_applied": score_threshold,
+                "top_score": None,
+                "lowest_score": None,
+                "filtering_reason": f"query_error: {str(e)}",
+                "status": "error"
+            }
+            return [], diag
 
-        results = []
+        all_candidates: List[Dict[str, Any]] = []
         for scored_point in scored_points:
             payload = scored_point.payload or {}
-            results.append({
+            doc_id = payload.get("document_id", "")
+            if filter_doc_id and doc_id != filter_doc_id:
+                continue
+
+            all_candidates.append({
                 "chunk_id": payload.get("chunk_id", str(scored_point.id)),
-                "document_id": payload.get("document_id", ""),
+                "document_id": doc_id,
                 "filename": payload.get("original_filename", ""),
                 "text": payload.get("text", ""),
-                "page_start": payload.get("page_start", 1),
-                "page_end": payload.get("page_end", 1),
+                "page_start": payload.get("page_start"),
+                "page_end": payload.get("page_end"),
                 "score": float(scored_point.score)
             })
 
+        total_candidates = len(all_candidates)
+        scores = [c["score"] for c in all_candidates]
+        top_score = round(max(scores), 4) if scores else None
+        lowest_score = round(min(scores), 4) if scores else None
+
+        # Apply score_threshold filter
+        if score_threshold is not None:
+            passed = [c for c in all_candidates if c["score"] >= score_threshold]
+        else:
+            passed = all_candidates
+
+        filtered_results = passed[:top_k]
+        retrieved_count = len(filtered_results)
+        filtered_out_count = total_candidates - len(passed)
+
+        if total_points == 0:
+            filtering_reason = "empty_collection"
+        elif total_candidates == 0:
+            filtering_reason = "no_candidates_found"
+        elif total_candidates > 0 and len(passed) == 0:
+            filtering_reason = "below_score_threshold"
+        else:
+            filtering_reason = "none"
+
+        diagnostics = {
+            "vector_store": "qdrant",
+            "collection": self.collection_name,
+            "vector_dimension": DEFAULT_VECTOR_SIZE,
+            "total_points_in_collection": total_points,
+            "candidates_found": total_candidates,
+            "retrieved_count": retrieved_count,
+            "filtered_out_count": filtered_out_count,
+            "score_threshold_applied": score_threshold,
+            "top_score": top_score,
+            "lowest_score": lowest_score,
+            "filtering_reason": filtering_reason,
+            "status": "success"
+        }
+
+        return filtered_results, diagnostics
+
+    def search_similar_chunks(
+        self,
+        query_vector: List[float],
+        top_k: int = 5,
+        score_threshold: Optional[float] = None,
+        filter_doc_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Queries Qdrant collection for top_k nearest vector points matching query_vector using Cosine similarity.
+        """
+        results, _ = self.search_similar_chunks_with_diagnostics(
+            query_vector=query_vector,
+            top_k=top_k,
+            score_threshold=score_threshold,
+            filter_doc_id=filter_doc_id
+        )
         return results
 
     def count_points(self) -> int:

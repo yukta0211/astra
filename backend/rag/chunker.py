@@ -62,7 +62,7 @@ def chunk_document(
     tagged_words: List[Dict[str, Any]] = []
 
     for page in pages:
-        page_num = page.get("page_number", 1)
+        page_num = page.get("page_number")
         page_text = clean_text(page.get("text", ""))
 
         if not page_text:

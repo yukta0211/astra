@@ -53,22 +53,44 @@ def add_calendar_event_action(title, time_str="7:00 PM", duration="19:00 – 21:
         "message": f"Added '{title}' ({duration}) to calendar with 6:45 PM reminder alert."
     }
 
-def add_personal_memory_action(category, title, content, confidence="98%", source="Voice / Chat"):
+from time_service import get_now
+from memory_service import resolve_verification_status
+
+def add_personal_memory_action(category, title, content, confidence=None, source="Voice / Chat", verification_status=None):
     conn = get_db()
     cursor = conn.cursor()
     mem_id = f"mem-{int(time.time() * 1000)}"
-    date_str = time.strftime("%Y-%m-%d")
+    date_str = get_now().strftime("%Y-%m-%d")
     
+    # Resolve verification status
+    resolved = resolve_verification_status(
+        raw_status=verification_status,
+        legacy_confidence=confidence,
+        source=source,
+        content=content
+    )
+    v_status = resolved["status"]
+    v_label = resolved["label"]
+
+    # Lifecycle and timestamps
+    lifecycle = v_status
+    last_verified = date_str if v_status == "VERIFIED" else None
+    last_updated = date_str
+
     cursor.execute(
-        "INSERT INTO personal_memories VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (mem_id, category, title, content, confidence, source, date_str)
+        """
+        INSERT INTO personal_memories 
+        (id, category, title, content, confidence, source, date, verification_status, lifecycle_state, last_verified_at, last_updated_at, original_source, original_date, original_content, edit_history) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (mem_id, category, title, content, v_label, source, date_str, v_status, lifecycle, last_verified, last_updated, source, date_str, content, "[]")
     )
 
     # Log Activity
     act_id = f"act-{int(time.time() * 1000)}"
     cursor.execute(
         "INSERT INTO recent_activities VALUES (?, ?, ?, ?)",
-        (act_id, f"Remembered: {title}", "Just now", "#00f2fe")
+        (act_id, f"Remembered ({v_label}): {title}", "Just now", "#00f2fe")
     )
 
     conn.commit()
@@ -78,5 +100,7 @@ def add_personal_memory_action(category, title, content, confidence="98%", sourc
         "success": True,
         "memory_id": mem_id,
         "title": title,
-        "message": f"Stored in persistent long-term memory: '{title}'"
+        "verification_status": v_status,
+        "status_label": v_label,
+        "message": f"Stored in persistent long-term memory: '{title}' [{v_label}]"
     }

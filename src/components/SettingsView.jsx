@@ -14,36 +14,40 @@ export default function SettingsView({ resetDemo }) {
   };
 
   return (
-    <div style={{ padding: '32px 28px', maxWidth: '860px', margin: '0 auto' }}>
+    <div className="astra-page-container" style={{ maxWidth: '860px' }}>
       
       {/* Header */}
-      <div style={{ marginBottom: '28px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11px', fontWeight: 700, letterSpacing: '0.1em', color: 'var(--cyan-primary)', marginBottom: '8px' }}>
-          <Settings size={16} />
-          <span>ASTRA SYSTEM CONFIGURATION</span>
+      <div className="astra-page-header" style={{ marginBottom: 'var(--section-gap, 28px)' }}>
+        <div style={{ minWidth: 0, flex: '1 1 auto' }}>
+          <div className="astra-eyebrow">
+            <Settings size={16} aria-hidden="true" />
+            <span>ASTRA SYSTEM CONFIGURATION</span>
+          </div>
+          <h1 className="astra-page-title">
+            System Settings & AI Preferences
+          </h1>
         </div>
-        <h1 style={{ fontFamily: 'var(--font-display)', fontSize: '32px', fontWeight: 700, color: '#fff' }}>
-          System Settings & AI Preferences
-        </h1>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--grid-gap, 20px)' }}>
         
         {/* Voice & Speech Synthesis Panel */}
-        <div className="glass-panel" style={{ padding: '24px' }}>
-          <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#fff', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Volume2 size={18} color="var(--cyan-primary)" />
+        <div className="glass-panel" style={{ padding: 'var(--card-padding, 24px)' }}>
+          <h3 className="astra-card-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Volume2 size={18} color="var(--cyan-primary)" aria-hidden="true" />
             <span>Voice & Audio Synthesis</span>
           </h3>
 
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', background: 'rgba(255,255,255,0.02)', borderRadius: '8px' }}>
             <div>
-              <div style={{ fontSize: '14px', fontWeight: 600, color: '#fff' }}>Enable Natural AI Voice Output</div>
-              <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Reads AI responses aloud using browser SpeechSynthesis</div>
+              <div className="astra-label" style={{ fontSize: 'var(--text-body, 15px)' }}>Enable Natural AI Voice Output</div>
+              <div className="astra-meta" style={{ fontSize: 'var(--text-meta, 12.5px)' }}>Reads AI responses aloud using browser SpeechSynthesis</div>
             </div>
 
             <button 
+              type="button"
               onClick={handleMuteToggle}
+              aria-pressed={!isMuted}
               className={isMuted ? 'btn-secondary' : 'btn-cyan'}
               style={{ fontSize: '12px' }}
             >
@@ -53,39 +57,45 @@ export default function SettingsView({ resetDemo }) {
         </div>
 
         {/* Vector Search Parameters */}
-        <div className="glass-panel" style={{ padding: '24px' }}>
-          <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#fff', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Cpu size={18} color="var(--purple-accent)" />
+        <div className="glass-panel" style={{ padding: 'var(--card-padding, 24px)' }}>
+          <h3 className="astra-card-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Cpu size={18} color="var(--purple-accent)" aria-hidden="true" />
             <span>RAG Vector Search Parameters</span>
           </h3>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#fff', marginBottom: '6px' }}>
+              <label htmlFor="topk-slider" style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--text-label, 13.5px)', color: '#fff', marginBottom: '6px' }}>
                 <span>Top-K Relevant Chunks Retracted</span>
                 <span style={{ color: 'var(--cyan-primary)', fontFamily: 'var(--font-mono)' }}>{topK} Chunks</span>
-              </div>
+              </label>
               <input 
+                id="topk-slider"
                 type="range" 
                 min="1" 
                 max="5" 
                 value={topK} 
+                aria-label="Top-K relevant chunks"
+                aria-valuetext={`${topK} Chunks`}
                 onChange={(e) => setTopK(parseInt(e.target.value))}
                 style={{ width: '100%', accentColor: 'var(--cyan-primary)' }}
               />
             </div>
 
             <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#fff', marginBottom: '6px' }}>
+              <label htmlFor="similarity-slider" style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--text-label, 13.5px)', color: '#fff', marginBottom: '6px' }}>
                 <span>Cosine Similarity Threshold</span>
                 <span style={{ color: 'var(--cyan-primary)', fontFamily: 'var(--font-mono)' }}>{similarityThreshold}</span>
-              </div>
+              </label>
               <input 
+                id="similarity-slider"
                 type="range" 
                 min="0.1" 
                 max="0.9" 
                 step="0.05"
                 value={similarityThreshold} 
+                aria-label="Cosine similarity threshold"
+                aria-valuetext={`${similarityThreshold}`}
                 onChange={(e) => setSimilarityThreshold(parseFloat(e.target.value))}
                 style={{ width: '100%', accentColor: 'var(--cyan-primary)' }}
               />
@@ -94,18 +104,19 @@ export default function SettingsView({ resetDemo }) {
         </div>
 
         {/* Reset Demo State */}
-        <div className="glass-panel" style={{ padding: '24px', border: '1px solid rgba(239, 68, 68, 0.3)' }}>
-          <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#ef4444', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <RefreshCw size={18} />
+        <div className="glass-panel" style={{ padding: 'var(--card-padding, 24px)', border: '1px solid var(--color-error-border)' }}>
+          <h3 className="astra-card-title" style={{ color: 'var(--color-error-text)', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <RefreshCw size={18} aria-hidden="true" />
             <span>Reset Demo State</span>
           </h3>
 
-          <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '16px' }}>
+          <p className="astra-description" style={{ marginBottom: '16px' }}>
             Restores Yuna's initial morning state, clearing newly added memories or rescheduling simulations.
           </p>
 
-          <button onClick={resetDemo} className="btn-secondary" style={{ color: '#ef4444', borderColor: 'rgba(239,68,68,0.4)' }}>
-            Reset ASTRA to Initial State
+          <button type="button" onClick={resetDemo} className="btn-destructive">
+            <RefreshCw size={14} aria-hidden="true" />
+            <span>Reset ASTRA to Initial State</span>
           </button>
         </div>
 

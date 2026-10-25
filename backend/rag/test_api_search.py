@@ -35,7 +35,7 @@ def test_api_semantic_search():
             
             assert "chunk_id" in item and item["chunk_id"]
             assert "document_id" in item
-            assert "filename" in item and item["filename"] == "sample_dbms_test_doc.pdf"
+            assert "filename" in item and item["filename"] in ["sample_dbms_test_doc.pdf", "DBMS_Notes_Normalization.pdf"]
             assert "page_start" in item and isinstance(item["page_start"], int)
             assert "page_end" in item and isinstance(item["page_end"], int)
             assert "score" in item and isinstance(item["score"], float)

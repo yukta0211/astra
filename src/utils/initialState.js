@@ -6,7 +6,9 @@ export const initialMemories = [
     category: 'Exams',
     title: 'DBMS Final Exam Date',
     content: 'DBMS exam is scheduled for Friday, March 21, 2025.',
-    confidence: '98%',
+    verification_status: 'NEEDS_REVIEW',
+    confidence: 'Needs Review',
+    legacy_confidence: '98%',
     date: '2025-03-16',
     source: 'Voice Input / Calendar'
   },
@@ -15,7 +17,9 @@ export const initialMemories = [
     category: 'Weak Subjects',
     title: 'Normalization Weakness',
     content: 'Struggles with 3NF vs BCNF decomposition and identifying Lossless Join properties.',
-    confidence: '95%',
+    verification_status: 'UNVERIFIED',
+    confidence: 'Unverified',
+    legacy_confidence: '95%',
     date: '2025-03-17',
     source: 'Quiz Mode Performance'
   },
@@ -24,7 +28,9 @@ export const initialMemories = [
     category: 'Preferences',
     title: 'Study Time Preference',
     content: 'Prefers deep focus revision slots in the evening between 19:00 and 21:00.',
-    confidence: '92%',
+    verification_status: 'UNVERIFIED',
+    confidence: 'Unverified',
+    legacy_confidence: '92%',
     date: '2025-03-15',
     source: 'Schedule Engine Analysis'
   }

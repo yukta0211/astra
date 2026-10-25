@@ -3,6 +3,21 @@
  * Configured for Asia/Kolkata timezone consistency with backend
  */
 
+const MONTHS_MAP = {
+  january: 0, jan: 0,
+  february: 1, feb: 1,
+  march: 2, mar: 2,
+  april: 3, apr: 3,
+  may: 4,
+  june: 5, jun: 5,
+  july: 6, jul: 6,
+  august: 7, aug: 7,
+  september: 8, sep: 8, sept: 8,
+  october: 9, oct: 9,
+  november: 10, nov: 10,
+  december: 11, dec: 11
+};
+
 export function getSystemTimeContext(backendTimeContext = null) {
   if (backendTimeContext && backendTimeContext.display_date) {
     return backendTimeContext;
@@ -42,15 +57,145 @@ export function getSystemTimeContext(backendTimeContext = null) {
 }
 
 /**
- * Dynamically computes multi-day exam revision schedule starting from current date.
- * Day 1 = Today
- * Day 2 = Tomorrow
- * Day 3 = Day 3
- * Day 4 = Exam Day (Day 4)
+ * Parses freeform and structured date strings safely without timezone drift.
  */
-export function getDynamicExamPlan(backendTimeContext = null) {
-  const baseDate = new Date();
+export function parseDateString(text) {
+  if (!text || typeof text !== 'string') {
+    return { isValid: false, date: null, dateIso: null, missingYear: false, rawMatch: null, error: 'Empty text' };
+  }
 
+  const clean = text.trim();
+
+  // 1. ISO format: YYYY-MM-DD
+  const isoMatch = clean.match(/\b(20\d\d)[-/](0?[1-9]|1[0-2])[-/](0?[1-9]|[12]\d|3[01])\b/);
+  if (isoMatch) {
+    const y = parseInt(isoMatch[1], 10);
+    const m = parseInt(isoMatch[2], 10) - 1;
+    const d = parseInt(isoMatch[3], 10);
+    const dateObj = new Date(Date.UTC(y, m, d));
+    if (!isNaN(dateObj.getTime()) && dateObj.getUTCDate() === d && dateObj.getUTCMonth() === m) {
+      const iso = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      return { isValid: true, date: dateObj, dateIso: iso, missingYear: false, rawMatch: isoMatch[0] };
+    }
+  }
+
+  // 2. Textual formats with year (e.g., 'Friday, March 21, 2025', 'March 21, 2025', '21st March 2025')
+  const monthRegexStr = Object.keys(MONTHS_MAP).join('|');
+
+  // Month Day, Year
+  const mdyRegex = new RegExp(`\\b(${monthRegexStr})\\s+(0?[1-9]|[12]\\d|3[01])(?:st|nd|rd|th)?(?:,)?\\s+(20\\d\\d)\\b`, 'i');
+  const mdyMatch = clean.match(mdyRegex);
+  if (mdyMatch) {
+    const monthIdx = MONTHS_MAP[mdyMatch[1].toLowerCase()];
+    const day = parseInt(mdyMatch[2], 10);
+    const year = parseInt(mdyMatch[3], 10);
+    const dateObj = new Date(Date.UTC(year, monthIdx, day));
+    if (!isNaN(dateObj.getTime()) && dateObj.getUTCDate() === day) {
+      const iso = `${year}-${String(monthIdx + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      return { isValid: true, date: dateObj, dateIso: iso, missingYear: false, rawMatch: mdyMatch[0] };
+    }
+  }
+
+  // Day Month Year
+  const dmyRegex = new RegExp(`\\b(0?[1-9]|[12]\\d|3[01])(?:st|nd|rd|th)?(?:\\s+of)?\\s+(${monthRegexStr})(?:,)?\\s+(20\\d\\d)\\b`, 'i');
+  const dmyMatch = clean.match(dmyRegex);
+  if (dmyMatch) {
+    const day = parseInt(dmyMatch[1], 10);
+    const monthIdx = MONTHS_MAP[dmyMatch[2].toLowerCase()];
+    const year = parseInt(dmyMatch[3], 10);
+    const dateObj = new Date(Date.UTC(year, monthIdx, day));
+    if (!isNaN(dateObj.getTime()) && dateObj.getUTCDate() === day) {
+      const iso = `${year}-${String(monthIdx + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      return { isValid: true, date: dateObj, dateIso: iso, missingYear: false, rawMatch: dmyMatch[0] };
+    }
+  }
+
+  // 3. Missing year: e.g. "October 24", "Friday, Oct 24", "March 21"
+  const noYearRegex = new RegExp(`\\b(${monthRegexStr})\\s+(0?[1-9]|[12]\\d|3[01])(?:st|nd|rd|th)?\\b`, 'i');
+  const noYearMatch = clean.match(noYearRegex);
+  if (noYearMatch) {
+    return { isValid: false, date: null, dateIso: null, missingYear: true, rawMatch: noYearMatch[0], error: 'Missing year' };
+  }
+
+  return { isValid: false, date: null, dateIso: null, missingYear: false, rawMatch: null, error: 'No date found' };
+}
+
+/**
+ * Evaluates whether a date string is Valid Future, Past/Outdated, or Needs Confirmation.
+ */
+export function evaluateExamDate(text, referenceDate = null) {
+  const parsed = parseDateString(text);
+  const now = referenceDate || new Date();
+  
+  // Use Asia/Kolkata date boundary
+  const localTodayIso = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(now);
+  const [curY, curM, curD] = localTodayIso.split('-').map(Number);
+  const localTodayUtc = new Date(Date.UTC(curY, curM - 1, curD));
+
+  if (parsed.missingYear) {
+    return {
+      status: 'NEEDS_CONFIRMATION',
+      statusLabel: 'Needs Confirmation (Missing Year)',
+      requiresConfirmation: true,
+      rawMatch: parsed.rawMatch,
+      dateIso: null,
+      daysDiff: null,
+      warning: `Date '${parsed.rawMatch}' is missing a year. Please confirm the full exam date.`
+    };
+  }
+
+  if (!parsed.isValid) {
+    return {
+      status: 'NEEDS_CONFIRMATION',
+      statusLabel: 'Needs Confirmation',
+      requiresConfirmation: true,
+      rawMatch: null,
+      dateIso: null,
+      daysDiff: null,
+      warning: 'No valid upcoming exam date confirmed.'
+    };
+  }
+
+  const diffMs = parsed.date.getTime() - localTodayUtc.getTime();
+  const daysDiff = Math.round(diffMs / (1000 * 60 * 60 * 24));
+
+  if (daysDiff < 0) {
+    return {
+      status: 'PAST_OUTDATED',
+      statusLabel: 'Past Exam Date',
+      requiresConfirmation: true,
+      rawMatch: parsed.rawMatch,
+      dateIso: parsed.dateIso,
+      daysDiff,
+      warning: `Stored exam date (${parsed.rawMatch}) has passed (${Math.abs(daysDiff)} days ago). An active countdown cannot be scheduled for a past date.`
+    };
+  }
+
+  return {
+    status: 'VALID_FUTURE',
+    statusLabel: 'Confirmed Future Date',
+    requiresConfirmation: false,
+    rawMatch: parsed.rawMatch,
+    dateIso: parsed.dateIso,
+    daysDiff,
+    warning: null
+  };
+}
+
+/**
+ * Returns exam revision plan.
+ * If backend planner state is passed, adopts it.
+ * Otherwise defaults to safe tentative schedule awaiting date confirmation.
+ */
+export function getDynamicExamPlan(backendPlannerData = null) {
+  if (backendPlannerData && backendPlannerData.plan && Array.isArray(backendPlannerData.plan)) {
+    return backendPlannerData.plan;
+  }
+  if (Array.isArray(backendPlannerData)) {
+    return backendPlannerData;
+  }
+
+  const baseDate = new Date();
   function formatDateOffset(offsetDays) {
     const d = new Date(baseDate);
     d.setDate(d.getDate() + offsetDays);
@@ -60,29 +205,30 @@ export function getDynamicExamPlan(backendTimeContext = null) {
     return `${dayName}, ${monthShort} ${dayNum}`;
   }
 
+  // Default tentative plan marked as awaiting confirmation
   return [
     {
-      day: 'Day 1',
+      day: 'Review 1',
       date: formatDateOffset(0),
-      status: 'Completed',
+      status: 'Tentative Review',
       isToday: true,
       sessions: [
-        { time: '19:00 - 20:30', topic: 'Functional Dependencies & 1NF/2NF', status: 'Done', focus: 'High' }
+        { time: '19:00 - 20:30', topic: 'Functional Dependencies & 1NF/2NF', status: 'Pending', focus: 'High' }
       ]
     },
     {
-      day: 'Day 2',
+      day: 'Review 2',
       date: formatDateOffset(1),
-      status: 'Scheduled',
+      status: 'Tentative Review',
       isToday: false,
       sessions: [
         { time: '19:00 - 21:00', topic: '3NF vs BCNF Decomposition & Lossless Join', status: 'Pending', focus: 'Priority (Weak Subject)' }
       ]
     },
     {
-      day: 'Day 3',
+      day: 'Review 3',
       date: formatDateOffset(2),
-      status: 'Scheduled',
+      status: 'Tentative Review',
       isToday: false,
       sessions: [
         { time: '18:30 - 20:30', topic: 'Transaction Management & Serializability', status: 'Pending', focus: 'Normal' },
@@ -90,13 +236,12 @@ export function getDynamicExamPlan(backendTimeContext = null) {
       ]
     },
     {
-      day: 'Day 4',
-      date: `${formatDateOffset(3)} (Exam Day)`,
-      status: 'Exam Day',
+      day: 'Exam Day',
+      date: 'Stored: Friday, March 21, 2025 (Outdated / Needs Confirmation)',
+      status: 'Needs Confirmation',
       isToday: false,
       sessions: [
-        { time: '08:00 - 09:30', topic: 'Final Formula Warmup & Key Definitions', status: 'Scheduled', focus: 'Review' },
-        { time: '10:00 - 13:00', topic: '⚡ DBMS FINAL EXAM', status: 'Exam', focus: 'Critical' }
+        { time: '--:--', topic: '⚡ DBMS FINAL EXAM (Awaiting Date Confirmation)', status: 'Unconfirmed', focus: 'Pending' }
       ]
     }
   ];

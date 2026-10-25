@@ -27,6 +27,8 @@ def is_daily_quota_error(err: Exception) -> bool:
     """
     if not err:
         return False
+    if isinstance(err, GeminiDailyQuotaExceededError):
+        return True
     err_str = str(err).lower()
 
     has_quota = ("429" in err_str or "resource_exhausted" in err_str or "quota" in err_str)
@@ -43,7 +45,7 @@ def is_daily_quota_error(err: Exception) -> bool:
 # Default settings
 DEFAULT_PROVIDER = os.getenv("LLM_PROVIDER", "gemini").lower()
 DEFAULT_API_KEY = os.getenv("LLM_API_KEY", "").strip()
-DEFAULT_MODEL = os.getenv("LLM_MODEL", "gemini-3.6-flash")
+DEFAULT_MODEL = os.getenv("LLM_MODEL", "gemini-3.8-flash")
 
 ASTRA_SYSTEM_PROMPT_TEMPLATE = """
 You are ASTRA, a personal AI Study OS assistant built for students.
@@ -56,6 +58,15 @@ Current Time & Environment Context:
 
 Student Profile & Stored Long-Term Memories:
 {memories_text}
+
+CRITICAL DATE & EXAM VALIDATION RULES:
+1. Always evaluate stored dates against the Current Date ({current_date_str}).
+2. Stored exam dates in the past (e.g., from 2025 when Current Date is in 2026) are OUTDATED.
+   - Do NOT assume the exam was rescheduled.
+   - Do NOT silently change the date.
+   - Do NOT treat historical dates as future deadlines or generate urgent countdown schedules for them.
+3. If the student asks when their exam is or asks for a study plan, explicitly inform them that the stored date has passed and ask them to confirm or provide their upcoming exam date.
+4. If a date is missing a year (e.g., 'October 24') or conflicting dates exist, ask the student to clarify or confirm the exact date.
 
 Supported Intents:
 1. GENERAL_CHAT: General questions, greetings, casual talk, study encouragement.
@@ -95,11 +106,28 @@ Do NOT wrap the JSON in markdown code blocks like ```json ... ``` unless necessa
 def format_system_prompt(time_ctx: Dict[str, Any], memories: List[Dict[str, Any]]) -> str:
     mem_str = ""
     if memories:
+        from date_service import parse_date_string
+        from time_service import get_now
+        local_today = get_now().date()
+
         for idx, m in enumerate(memories, 1):
             category = m.get("category", "General")
             title = m.get("title", "")
             content = m.get("content", "")
-            mem_str += f"- [{category}] {title}: {content}\n"
+            
+            # Check for date in memory
+            date_annotation = ""
+            parsed = parse_date_string(f"{title}. {content}")
+            if parsed["is_valid"]:
+                if parsed["date_obj"] < local_today:
+                    days_ago = (local_today - parsed["date_obj"]).days
+                    date_annotation = f" [AUDIT STATUS: OUTDATED - Stored date {parsed['iso_date']} passed {days_ago} days ago. Needs confirmation.]"
+                else:
+                    date_annotation = f" [AUDIT STATUS: VALID FUTURE DATE - {parsed['iso_date']}]"
+            elif parsed.get("missing_year"):
+                date_annotation = " [AUDIT STATUS: NEEDS CONFIRMATION - Date is missing year]"
+
+            mem_str += f"- [{category}] {title}: {content}{date_annotation}\n"
     else:
         mem_str = "No stored personal memories yet.\n"
 
@@ -207,14 +235,39 @@ class LLMProvider:
             response_mime_type="application/json"
         )
 
-        response = client.models.generate_content(
-            model=self.model if ("gemini" in self.model and "2.5" not in self.model) else "gemini-3.6-flash",
-            contents=contents,
-            config=config
-        )
+        candidate_models = [
+            self.model if self.model else "gemini-3.8-flash",
+            "gemini-3.8-flash",
+            "gemini-3.5-flash",
+            "gemini-3.5-flash-lite",
+            "gemini-3.1-flash-lite",
+            "gemini-3.6-flash",
+            "gemini-3.7-flash",
+            "gemini-flash-latest"
+        ]
+        unique_models = list(dict.fromkeys([m for m in candidate_models if m]))
 
-        raw_text = response.text or "{}"
-        return self._parse_json_response(raw_text)
+        last_err = None
+        for model_name in unique_models:
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=contents,
+                    config=config
+                )
+                raw_text = response.text or "{}"
+                return self._parse_json_response(raw_text)
+            except Exception as e:
+                if is_daily_quota_error(e):
+                    raise GeminiDailyQuotaExceededError(DAILY_QUOTA_ERROR_MESSAGE) from e
+                logger.warning(f"Gemini model '{model_name}' encountered API error ({str(e)}). Trying fallback model...")
+                last_err = e
+
+        if last_err:
+            if is_daily_quota_error(last_err):
+                raise GeminiDailyQuotaExceededError(DAILY_QUOTA_ERROR_MESSAGE) from last_err
+            raise last_err
+        return {}
 
     def generate_grounded_text(self, prompt: str, system_instruction: str) -> str:
         """
@@ -235,11 +288,11 @@ class LLMProvider:
         )
 
         candidate_models = [
-            self.model if self.model else "gemini-2.5-flash",
-            "gemini-2.5-flash",
-            "gemini-3.1-flash-lite",
-            "gemini-2.5-flash-lite",
+            self.model if self.model else "gemini-3.8-flash",
+            "gemini-3.8-flash",
             "gemini-3.5-flash",
+            "gemini-3.5-flash-lite",
+            "gemini-3.1-flash-lite",
             "gemini-3.6-flash",
             "gemini-3.7-flash",
             "gemini-flash-latest"

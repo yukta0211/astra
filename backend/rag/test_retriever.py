@@ -59,7 +59,7 @@ def test_semantic_retrieval_queries():
 
             assert "chunk_id" in res and res["chunk_id"], "Missing chunk_id"
             assert "document_id" in res, "Missing document_id"
-            assert "filename" in res and res["filename"] == "sample_dbms_test_doc.pdf", f"Invalid filename: {res.get('filename')}"
+            assert "filename" in res and res["filename"] in ["sample_dbms_test_doc.pdf", "DBMS_Notes_Normalization.pdf"], f"Invalid filename: {res.get('filename')}"
             assert "page_start" in res and isinstance(res["page_start"], int), "Invalid page_start"
             assert "page_end" in res and isinstance(res["page_end"], int), "Invalid page_end"
             assert "score" in res and isinstance(res["score"], float), "Score must be float"

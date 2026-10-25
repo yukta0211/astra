@@ -7,8 +7,11 @@ def test_step4a_and_phase1_regressions():
     print("==================================================")
 
     # 1. Step 4A Upload Endpoint Test
+    from rag.test_ingestion import create_mock_pdf_file
     upload_url = "http://localhost:8000/api/knowledge/upload"
     pdf_path = os.path.abspath("sample_dbms_test_doc.pdf")
+    if not os.path.exists(pdf_path):
+        pdf_path = create_mock_pdf_file("sample_dbms_test_doc.pdf")
     
     with open(pdf_path, "rb") as f:
         files = {"file": ("sample_dbms_test_doc.pdf", f, "application/pdf")}

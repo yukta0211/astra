@@ -1,5 +1,5 @@
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from llm.provider import llm_provider
 
 logger = logging.getLogger("astra.rag.answer_generator")
@@ -14,6 +14,80 @@ STRICT GROUNDING RULES:
 4. Do not pretend to have read the full document beyond the provided passages.
 5. Preserve technical terminology, formulas, and definitions from the source text.
 6. Provide a clear, structured, and student-friendly explanation directly answering the user's question."""
+
+def format_page_label(page_start: Optional[int], page_end: Optional[int]) -> Tuple[str, bool, Optional[str]]:
+    """
+    Constructs an accurate, trustworthy page label without inventing page numbers.
+    Returns:
+        (page_label, has_page_numbers, limitation_note)
+    """
+    if page_start is not None and page_end is not None:
+        if page_start == page_end:
+            return f"Page {page_start}", True, None
+        return f"Pages {page_start}–{page_end}", True, None
+    elif page_start is not None:
+        return f"Page {page_start}", True, None
+    else:
+        return "Page unavailable (Document level)", False, "Document lacks page-level metadata; cited at document level."
+
+def build_trustworthy_citations(
+    retrieved_chunks: List[Dict[str, Any]]
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """
+    Constructs deterministic, inspectable citations and sources metadata
+    strictly referencing the actual retrieved passages returned by retrieval.
+    """
+    citations: List[Dict[str, Any]] = []
+    sources: List[Dict[str, Any]] = []
+    seen_chunk_ids = set()
+
+    for idx, chk in enumerate(retrieved_chunks, 1):
+        chunk_id = chk.get("chunk_id") or f"chk_{idx}"
+        if chunk_id in seen_chunk_ids:
+            continue
+        seen_chunk_ids.add(chunk_id)
+
+        filename = chk.get("filename") or chk.get("original_filename") or "Document"
+        p_start = chk.get("page_start")
+        p_end = chk.get("page_end")
+        text = chk.get("text", "").strip()
+        score = round(float(chk.get("score", 0.0)), 4)
+        doc_id = chk.get("document_id", "")
+
+        page_label, has_pages, limitation_note = format_page_label(p_start, p_end)
+
+        citation = {
+            "citation_id": f"cite_{idx}",
+            "chunk_id": chunk_id,
+            "document_id": doc_id,
+            "filename": filename,
+            "page_start": p_start,
+            "page_end": p_end,
+            "has_page_numbers": has_pages,
+            "page_label": page_label,
+            "page_limitation_note": limitation_note,
+            "score": score,
+            "text": text,
+            "character_count": len(text)
+        }
+        citations.append(citation)
+
+        source = {
+            "source_id": f"src_{idx}",
+            "chunk_id": chunk_id,
+            "document_id": doc_id,
+            "score": score,
+            "filename": filename,
+            "page_start": p_start,
+            "page_end": p_end,
+            "has_page_numbers": has_pages,
+            "page_label": page_label,
+            "page_limitation_note": limitation_note,
+            "text": text
+        }
+        sources.append(source)
+
+    return citations, sources
 
 def generate_grounded_answer(
     question: str,
@@ -37,22 +111,24 @@ def generate_grounded_answer(
         return {
             "answer": "I couldn't find relevant information in the uploaded documents to answer that question.",
             "citations": [],
-            "sources": []
+            "sources": [],
+            "is_grounded": False,
+            "grounding_status": "unsupported"
         }
 
     # Step 1: Format retrieved context passages
     context_blocks = []
     for idx, chk in enumerate(retrieved_chunks, 1):
-        filename = chk.get("filename", "Document")
-        p_start = chk.get("page_start", 1)
-        p_end = chk.get("page_end", 1)
-        page_info = f"Page {p_start}" if p_start == p_end else f"Pages {p_start}–{p_end}"
+        filename = chk.get("filename") or chk.get("original_filename") or "Document"
+        p_start = chk.get("page_start")
+        p_end = chk.get("page_end")
+        page_label, _, _ = format_page_label(p_start, p_end)
         text = chk.get("text", "").strip()
 
         context_blocks.append(
             f"[Source {idx}]\n"
             f"Filename: {filename}\n"
-            f"{page_info}\n"
+            f"Location: {page_label}\n"
             f"Passage Content:\n{text}\n"
         )
 
@@ -78,36 +154,12 @@ def generate_grounded_answer(
         raise e
 
     # Step 3: Build deterministic citations and sources metadata from retrieved chunks
-    citations = []
-    seen_citations = set()
-
-    for chk in retrieved_chunks:
-        filename = chk.get("filename", "")
-        p_start = chk.get("page_start", 1)
-        p_end = chk.get("page_end", 1)
-        cite_key = (filename, p_start, p_end)
-
-        if cite_key not in seen_citations and filename:
-            seen_citations.add(cite_key)
-            citations.append({
-                "filename": filename,
-                "page_start": p_start,
-                "page_end": p_end
-            })
-
-    sources = [
-        {
-            "chunk_id": chk.get("chunk_id", ""),
-            "score": chk.get("score", 0.0),
-            "filename": chk.get("filename", ""),
-            "page_start": chk.get("page_start", 1),
-            "page_end": chk.get("page_end", 1)
-        }
-        for chk in retrieved_chunks
-    ]
+    citations, sources = build_trustworthy_citations(retrieved_chunks)
 
     return {
         "answer": raw_answer,
         "citations": citations,
-        "sources": sources
+        "sources": sources,
+        "is_grounded": True,
+        "grounding_status": "document_grounded"
     }

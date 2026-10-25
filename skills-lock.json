@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "skills": {
+    "voicestudio": {
+      "source": "debpalash/VoiceStudio",
+      "sourceType": "github",
+      "skillPath": "skills/voicestudio/SKILL.md",
+      "computedHash": "6aa8905113afc1cb1e0ce4c5825143f3ab0d002987b1bf0fc56ada0500782495"
+    },
+    "voicestudio-maintainer": {
+      "source": "debpalash/VoiceStudio",
+      "sourceType": "github",
+      "skillPath": "skills/voicestudio-maintainer/SKILL.md",
+      "computedHash": "799313c5211a0cf569f3e0d893663625343be8741a92b6a2c6aedbf5f732a462"
+    }
+  }
+}

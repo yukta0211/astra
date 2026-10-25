@@ -61,7 +61,8 @@ export default function StoryBar({ runScenarioStep, currentStepIndex }) {
                 fontSize: '11px',
                 fontWeight: isActive ? 600 : 400,
                 cursor: 'pointer',
-                transition: 'all 0.15s ease',
+                className: 'interactive-chip',
+                transition: 'transform var(--duration-press) var(--ease-out), background-color var(--duration-hover) var(--ease-out), border-color var(--duration-hover) var(--ease-out)',
                 whiteSpace: 'nowrap'
               }}
               title={step.desc}
